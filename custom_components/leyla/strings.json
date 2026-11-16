@@ -1,0 +1,81 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Your Leyla server",
+        "description": "The address you open Leyla at, for example http://192.168.1.20:10001.",
+        "data": {
+          "url": "Server address"
+        }
+      },
+      "method": {
+        "title": "Sign in",
+        "menu_options": {
+          "code": "Sign in with a code (recommended)",
+          "token": "Paste a token from a signed-in device"
+        }
+      },
+      "code_expired": {
+        "title": "The code ran out",
+        "description": "Nobody approved the code in time. Get a new one, or paste a token instead.",
+        "menu_options": {
+          "code": "Get a new code",
+          "token": "Paste a token from a signed-in device"
+        }
+      },
+      "token": {
+        "title": "Paste a token",
+        "description": "A token from a device that is signed in to Leyla. It stays valid while it is used and ends when that device is signed out.",
+        "data": {
+          "access_token": "Token"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Sign in again",
+        "description": "Home Assistant was signed out of Leyla at {url}. Sign in again to keep your TVs and streams here.",
+        "menu_options": {
+          "code": "Sign in with a code (recommended)",
+          "token": "Paste a token from a signed-in device"
+        }
+      }
+    },
+    "progress": {
+      "wait_for_approval": "Open {link} on a device where you are signed in to Leyla and enter the code **{code}**. Home Assistant signs in as soon as you approve it."
+    },
+    "error": {
+      "invalid_url": "That is not a web address. Use http:// or https:// with the server's name or IP address.",
+      "invalid_auth": "Leyla did not accept that token.",
+      "cannot_connect": "Leyla did not answer at that address."
+    },
+    "abort": {
+      "already_configured": "This Leyla account is already set up.",
+      "cannot_connect": "Leyla did not answer at that address.",
+      "invalid_auth": "Leyla did not accept the sign-in.",
+      "reauth_successful": "Signed in again.",
+      "wrong_account": "That sign-in belongs to another account. Sign in as the account this entry was set up with."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "active_streams": {
+        "name": "Active streams",
+        "unit_of_measurement": "streams"
+      },
+      "active_conversions": {
+        "name": "Active conversions",
+        "unit_of_measurement": "streams"
+      }
+    }
+  },
+  "exceptions": {
+    "not_connected": {
+      "message": "Home Assistant is not connected to Leyla right now."
+    },
+    "command_failed": {
+      "message": "Leyla refused the command: {error}."
+    },
+    "no_media_source": {
+      "message": "That title has no file to play."
+    }
+  }
+}
