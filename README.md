@@ -1,5 +1,8 @@
 # Leyla for Home Assistant
 
+For [Leyla](https://leyla.media), the media server for the films and shows
+you own.
+
 Your Leyla TVs as media players, your server's streams as sensors, and an
 event when a library changes. It talks only to your own Leyla server, on
 your network or at the address you give it. Nothing goes through any other
