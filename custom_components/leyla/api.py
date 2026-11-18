@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 import aiohttp
 
@@ -202,6 +202,93 @@ class LeylaApi:
             raise self._error(status, body)
         return body
 
+    async def catalog_list(
+        self,
+        *,
+        library_id: str | None = None,
+        kind: str | None = None,
+        query: str | None = None,
+        sort: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """One page of titles: `items`, `total`, `has_more`."""
+        params: dict[str, str] = {"limit": str(limit), "offset": str(offset)}
+        if library_id:
+            params["library_id"] = library_id
+        if kind:
+            params["type"] = kind
+        if query:
+            params["q"] = query
+        if sort:
+            params["sort"] = sort
+        status, body = await self._request("GET", f"/api/v1/catalog?{urlencode(params)}")
+        if status != 200 or not isinstance(body, dict) or not isinstance(body.get("items"), list):
+            raise self._error(status, body)
+        return body
+
+    async def series_continue(self, series_id: str) -> dict[str, Any] | None:
+        """The episode a series goes on with for this account, if any."""
+        status, body = await self._request(
+            "GET", f"/api/v1/series/{quote(series_id, safe='')}/continue"
+        )
+        if status != 200:
+            raise self._error(status, body)
+        return body if isinstance(body, dict) and body.get("media_source_id") else None
+
+    async def continue_watching(self) -> list[dict[str, Any]]:
+        """What this account is partway through, newest first."""
+        status, body = await self._request("GET", "/api/v1/home/continue-watching")
+        if status != 200 or not isinstance(body, dict):
+            raise self._error(status, body)
+        items = body.get("items")
+        return items if isinstance(items, list) else []
+
+    async def catalog_counts(self) -> list[dict[str, Any]]:
+        """Each library's number of titles (films and series)."""
+        status, body = await self._request("GET", "/api/v1/catalog/counts")
+        if status != 200 or not isinstance(body, list):
+            raise self._error(status, body)
+        return body
+
+    async def start_scan(self, library_id: str) -> None:
+        """Ask the server to scan one library (admins only)."""
+        status, body = await self._request(
+            "POST", f"/api/v1/libraries/{quote(library_id, safe='')}/scans"
+        )
+        if status not in (200, 201, 202):
+            raise self._error(status, body)
+
+    async def updates(self) -> dict[str, Any]:
+        """The server's own update state (admins only)."""
+        status, body = await self._request("GET", "/api/v1/admin/updates")
+        if status != 200 or not isinstance(body, dict) or "running" not in body:
+            raise self._error(status, body)
+        return body
+
+    async def install_update(self) -> None:
+        """Fetch, rehearse and install the newer release now."""
+        status, body = await self._request("POST", "/api/v1/admin/updates/install")
+        if status not in (200, 202, 204):
+            raise self._error(status, body)
+
+    async def findings(self) -> list[dict[str, Any]]:
+        """What the server has judged needs attention (admins only)."""
+        status, body = await self._request("GET", "/api/v1/admin/findings")
+        if status != 200 or not isinstance(body, dict):
+            raise self._error(status, body)
+        findings = body.get("findings")
+        return findings if isinstance(findings, list) else []
+
+    async def acknowledge_finding(self, finding_id: str, title: str | None = None) -> None:
+        """Set a finding aside, as Administration's inbox does."""
+        path = f"/api/v1/admin/findings/{quote(finding_id, safe='')}/acknowledge"
+        if title:
+            path += f"?{urlencode({'title': title})}"
+        status, body = await self._request("POST", path)
+        if status not in (200, 204):
+            raise self._error(status, body)
+
     async def fetch_image(self, url: str) -> tuple[bytes, str]:
         """An artwork image, fetched with the bearer from this server only."""
         parts = urlsplit(url)
@@ -234,7 +321,11 @@ class LeylaApi:
 
 
 def poster_url(detail: dict[str, Any]) -> str | None:
-    """The best poster in a title's detail: the chosen one, else the first."""
+    """The best poster of a title: a list row's `poster_artwork`, else the
+    detail's chosen poster, else its first."""
+    listed = detail.get("poster_artwork")
+    if isinstance(listed, dict) and isinstance(listed.get("url"), str):
+        return str(listed["url"])
     artwork = detail.get("artwork")
     if not isinstance(artwork, list):
         return None
@@ -242,5 +333,5 @@ def poster_url(detail: dict[str, Any]) -> str | None:
     posters.sort(key=lambda a: not a.get("chosen", False))
     for art in posters:
         if isinstance(art.get("url"), str):
-            return art["url"]
+            return str(art["url"])
     return None

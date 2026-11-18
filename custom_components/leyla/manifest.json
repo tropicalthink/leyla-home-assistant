@@ -1,13 +1,20 @@
 {
   "domain": "leyla",
   "name": "Leyla",
-  "codeowners": ["@tropicalthink"],
+  "codeowners": [
+    "@tropicalthink"
+  ],
   "config_flow": true,
-  "dependencies": [],
-  "documentation": "https://github.com/tropicalthink/leyla-home-assistant",
+  "dependencies": [
+    "repairs"
+  ],
+  "documentation": "https://leyla.media/home-assistant",
   "integration_type": "hub",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/tropicalthink/leyla-home-assistant/issues",
   "requirements": [],
-  "version": "0.1.0"
+  "version": "0.1.1",
+  "zeroconf": [
+    "_leyla._tcp.local."
+  ]
 }

@@ -1,4 +1,5 @@
-"""Active streams and conversions on the server (admin sign-ins only)."""
+"""Active streams and conversions on the server (admin sign-ins only), and
+how many titles each library holds (every sign-in, for its own libraries)."""
 
 from __future__ import annotations
 
@@ -18,7 +19,9 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import LeylaConfigEntry
 from .const import CONVERTING_VIDEO_ACTION, DOMAIN, MAX_SESSIONS_IN_ATTRIBUTES
-from .hub import NowPlayingCoordinator
+from .hub import LeylaCoordinator, LeylaHub
+
+type Sessions = LeylaCoordinator[list[dict[str, Any]]]
 
 PARALLEL_UPDATES = 0
 
@@ -56,13 +59,16 @@ async def async_setup_entry(
     entry: LeylaConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Only an administrator's sign-in may read the server's sessions."""
-    coordinator = entry.runtime_data.now_playing
-    if coordinator is None:
-        return
-    async_add_entities(
-        LeylaStreamsSensor(coordinator, entry, description) for description in SENSORS
-    )
+    """Library sizes for everyone; the server's sessions for an administrator."""
+    hub = entry.runtime_data
+    entities: list[SensorEntity] = [
+        LeylaLibrarySensor(hub, entry, library_id) for library_id in hub.libraries
+    ]
+    if hub.now_playing is not None:
+        entities += [
+            LeylaStreamsSensor(hub.now_playing, entry, description) for description in SENSORS
+        ]
+    async_add_entities(entities)
 
 
 def session_summary(session: dict[str, Any]) -> dict[str, Any]:
@@ -76,7 +82,7 @@ def session_summary(session: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-class LeylaStreamsSensor(CoordinatorEntity[NowPlayingCoordinator], SensorEntity):
+class LeylaStreamsSensor(CoordinatorEntity[Sessions], SensorEntity):
     """A count of live sessions, with a short list of them."""
 
     _attr_has_entity_name = True
@@ -86,7 +92,7 @@ class LeylaStreamsSensor(CoordinatorEntity[NowPlayingCoordinator], SensorEntity)
 
     def __init__(
         self,
-        coordinator: NowPlayingCoordinator,
+        coordinator: Sessions,
         entry: LeylaConfigEntry,
         description: LeylaSensorDescription,
     ) -> None:
@@ -115,3 +121,27 @@ class LeylaStreamsSensor(CoordinatorEntity[NowPlayingCoordinator], SensorEntity)
             "sessions": [session_summary(s) for s in sessions[:MAX_SESSIONS_IN_ATTRIBUTES]],
             "more": max(0, len(sessions) - MAX_SESSIONS_IN_ATTRIBUTES),
         }
+
+
+class LeylaLibrarySensor(CoordinatorEntity[LeylaCoordinator[list[dict[str, Any]]]], SensorEntity):
+    """How many titles (films and series) one library holds."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "library_titles"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, hub: LeylaHub, entry: LeylaConfigEntry, library_id: str) -> None:
+        super().__init__(hub.counts)
+        self.library_id = library_id
+        self._attr_unique_id = f"{entry.unique_id or entry.entry_id}_titles_{library_id}"
+        self._attr_translation_placeholders = {"library": hub.libraries[library_id] or library_id}
+        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, entry.entry_id)})
+
+    @property
+    def native_value(self) -> int | None:
+        """The count, once the server has said it."""
+        for row in self.coordinator.data or []:
+            if isinstance(row, dict) and str(row.get("library_id")) == self.library_id:
+                count = row.get("item_count")
+                return int(count) if isinstance(count, (int, float)) else None
+        return 0 if self.coordinator.data is not None else None

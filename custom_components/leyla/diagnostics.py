@@ -38,6 +38,19 @@ async def async_get_config_entry_diagnostics(
             for device in hub.devices.values()
         ],
         "libraries": len(hub.libraries),
+        "update": None
+        if hub.updates is None or hub.updates.data is None
+        else {
+            key: hub.updates.data.get(key)
+            for key in ("running", "state", "channel", "automatic", "needs_plan")
+        },
+        "findings": None
+        if hub.findings is None
+        else sorted(
+            f"{f.get('severity')}:{f.get('kind')}"
+            for f in hub.findings.data or []
+            if isinstance(f, dict)
+        ),
         "streams": None
         if sessions is None
         else [

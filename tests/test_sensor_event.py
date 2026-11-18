@@ -159,6 +159,17 @@ async def test_server_absent_at_setup_retries(
     assert entry.state is ConfigEntryState.SETUP_RETRY
 
 
+async def test_diagnostics_for_an_admin(
+    hass: HomeAssistant, entry: MockConfigEntry, mock_api: dict[str, Any]
+) -> None:
+    mock_api["me"].return_value = account(is_admin=True)
+    mock_api["findings"].return_value = [{"severity": "action", "kind": "disk_low"}, "junk"]
+    await setup(hass, entry)
+    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+    assert diagnostics["update"]["running"] == "0.15.1"
+    assert diagnostics["findings"] == ["action:disk_low"]
+
+
 async def test_diagnostics_redact_the_token(
     hass: HomeAssistant, entry: MockConfigEntry, mock_api: dict[str, Any]
 ) -> None:

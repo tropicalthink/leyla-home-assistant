@@ -3,93 +3,91 @@
 For [Leyla](https://leyla.media), the media server for the films and shows
 you own.
 
-Your Leyla TVs as media players, your server's streams as sensors, and an
-event when a library changes. It talks only to your own Leyla server, on
+Your Leyla TVs as media players you can browse, search and talk to, your
+server's streams, library sizes, updates and problems in Home Assistant, and
+an event when a library changes. It talks only to your own Leyla server, on
 your network or at the address you give it. Nothing goes through any other
 service.
+
+The full guide is at **[leyla.media/home-assistant](https://leyla.media/home-assistant)**.
 
 ## Install
 
 1. In HACS, open the menu, choose **Custom repositories**, add this
    repository with the type **Integration**, and install **Leyla**.
 2. Restart Home Assistant.
-3. Go to **Settings > Devices & services > Add integration** and pick
-   **Leyla**.
-4. Enter the address you open Leyla at, for example
-   `http://192.168.1.20:10001`.
-5. Choose **Sign in with a code**. Open the link shown (your server's
+3. A Leyla server on your network shows up under **Settings > Devices &
+   services** as discovered: press **Add**. Otherwise choose **Add
+   integration**, pick **Leyla** and enter the address you open Leyla at,
+   for example `http://192.168.1.20:10001`.
+4. Choose **Sign in with a code**. Open the link shown (your server's
    `/link` page) on a phone or computer where you are signed in to Leyla,
    enter the code and approve it. Home Assistant signs in by itself.
 
 You can also paste a token from a device that is already signed in. The
 code is better: Home Assistant gets its own sign-in, listed as "Leyla app on
-Home Assistant" in Your devices, where you can sign it out at any time.
-
-If the sign-in ends (signed out, or unused for 30 days), Home Assistant asks
-you to sign in again.
+Home Assistant" in Your devices, where you can sign it out at any time. If
+the sign-in ends, Home Assistant asks you to sign in again. If the server
+moves, **Reconfigure** takes the new address and keeps the sign-in.
 
 ## What you get
 
 **A media player per TV.** Every TV that runs Leyla signed in to your
-account (LG and Samsung, Android TV and Fire TV) appears as a device with a
-media player. It shows what plays, the poster, the position and length,
-and lets you play, pause, stop, seek, skip to the next episode and, where
-the TV owns its volume, set and mute the volume. A TV that is switched off
-or closes Leyla stays in Home Assistant as unavailable and comes back when
-it opens Leyla again.
+account (LG and Samsung, Android TV, Google TV and Fire TV) appears as a
+device with a media player: what plays, the poster, position and length,
+play, pause, stop, seek, next episode and, where the TV owns it, volume.
 
-`media_player.play_media` starts a title on the TV: `media_content_id` is
-the title's id (what follows `/catalog/` in the address of its page in Leyla), or
-`<title id>:<file id>` to pick one file. The content type is ignored.
+- **Browse** Continue watching and every library, down to seasons and
+  episodes, from the media browser, and play any of it on the TV. Playing a
+  series goes on where you left off.
+- **Search** by title or by what it is about. Voice assistants use it:
+  "play Arrival on the living room TV".
+- **Audio** and **Subtitles** pickers switch the track of what plays, from
+  the tracks the TV reports.
+- `media_player.play_media` takes a title's id (what follows `/catalog/` in
+  its address in Leyla), or `<title id>:<file id>` for one file.
 
-A command from Home Assistant takes control of the TV only for that
-command: it releases the TV straight after, so the TV does not keep saying
-it is controlled from Home Assistant and your phone takes over again with
-its next command.
+A command from Home Assistant takes control of the TV only for that command
+and releases it straight after. A TV that is switched off stays as
+unavailable and comes back when it opens Leyla again; one that is gone for
+good can be deleted from its device page.
 
-**Streams sensors (administrators only).** When you sign in as an
-administrator you also get **Active streams** and **Active conversions**.
-A conversion is a stream whose picture the server re-encodes; a stream it
-only repackages counts as a stream. The sensors carry the newest ten sessions as an
-attribute (who, which device, what, how).
+**On the server's device:**
 
-**An event when a library changes.** `leyla_library_updated` fires when
-titles in a library are added, changed or removed, at most once every few
-seconds per library:
+- **<library> titles**: how many films and series each library holds.
+- **Library updated**: an event entity that fires when titles in a library
+  are added, changed or removed (also on the bus as
+  `leyla_library_updated`, with `library_id` and `library_name`).
 
-```yaml
-event_type: leyla_library_updated
-data:
-  config_entry_id: 0123abcd...
-  library_id: 5b1e...      # null when changes were missed and the server cannot say where
-  library_name: Films       # null when unknown
-```
+**For an administrator's sign-in, also:**
 
-For example, to announce new films:
-
-```yaml
-triggers:
-  - trigger: event
-    event_type: leyla_library_updated
-    event_data:
-      library_name: Films
-actions:
-  - action: notify.notify
-    data:
-      message: Something changed in Films.
-```
+- **Leyla server** update entity: the running version, the newer one, how
+  far the fetch has got, and **Install** to update now. Leyla rehearses a
+  release on your own library before it installs it.
+- **Scan <library>** buttons.
+- **Active streams** and **Active conversions** sensors, with the newest ten
+  sessions as an attribute.
+- **Repairs**: what Leyla's server says needs your attention (a full disk, a
+  backup that stopped) appears in Home Assistant's Repairs, in Leyla's own
+  words. **Set aside** there sets it aside in Leyla too.
 
 ## Diagnostics
 
-**Download diagnostics** on the integration gives the link's state (connected
-or not, why it last closed, the TVs' statuses) without the token, the
-server address or account names.
+**Download diagnostics** gives the link's state, the TVs' statuses, the
+update state and the kinds of open findings, without the token, the server
+address or account names.
+
+## Removing it
+
+Delete the integration under **Settings > Devices & services**. Then, in
+Leyla, sign out "Leyla app on Home Assistant" under Your devices.
 
 ## Development
 
 ```sh
 uv venv -p 3.14 ~/.cache/leyla-ha-venv
 VIRTUAL_ENV=~/.cache/leyla-ha-venv uv pip install -r requirements_test.txt
-~/.cache/leyla-ha-venv/bin/pytest -p no:xdist tests
+~/.cache/leyla-ha-venv/bin/pytest -p no:xdist tests --cov=custom_components/leyla
 ~/.cache/leyla-ha-venv/bin/ruff check custom_components tests
+~/.cache/leyla-ha-venv/bin/mypy
 ```

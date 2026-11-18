@@ -10,23 +10,29 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from homeassistant.components.media_player import (
-    MediaPlayerEntity,
+from homeassistant.components.media_player import MediaPlayerEntity
+from homeassistant.components.media_player.browse_media import (
+    BrowseMedia,
+    SearchMedia,
+    SearchMediaQuery,
+)
+from homeassistant.components.media_player.const import (
+    MediaClass,
     MediaPlayerEntityFeature,
     MediaPlayerState,
     MediaType,
 )
+from homeassistant.components.media_player.errors import BrowseError
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import device_registry as dr, entity_registry as er
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import LeylaConfigEntry
-from .api import LeylaError
-from .const import DOMAIN
-from .hub import LeylaCommandError, LeylaHub, RemoteDevice, signal_devices
+from .api import LeylaError, poster_url
+from .const import BROWSE_PAGE, DOMAIN, SEARCH_LIMIT
+from .hub import LeylaCommandError, LeylaHub, RemoteDevice, signal_devices, tv_device_info
 
 STATE_MAP: dict[str, MediaPlayerState] = {
     "idle": MediaPlayerState.IDLE,
@@ -44,7 +50,24 @@ BASE_FEATURES = (
     | MediaPlayerEntityFeature.STOP
     | MediaPlayerEntityFeature.SEEK
     | MediaPlayerEntityFeature.PLAY_MEDIA
+    | MediaPlayerEntityFeature.BROWSE_MEDIA
+    | MediaPlayerEntityFeature.SEARCH_MEDIA
 )
+
+# Browse ids: the root, Continue watching, a library (with an offset for
+# its next page), a title to open (a series or season) and an item to play.
+ROOT = "leyla"
+CONTINUE = "continue"
+LIBRARY = "library"
+TITLE = "title"
+ITEM = "item"
+
+
+def play_id(item_id: str, source_id: str | None = None) -> str:
+    """The browse id that plays a title, with its file when one is known."""
+    return f"{ITEM}:{item_id}:{source_id}" if source_id else f"{ITEM}:{item_id}"
+
+
 VOLUME_FEATURES = MediaPlayerEntityFeature.VOLUME_SET | MediaPlayerEntityFeature.VOLUME_MUTE
 
 PARALLEL_UPDATES = 0
@@ -57,7 +80,7 @@ async def async_setup_entry(
 ) -> None:
     """Add a player for every TV seen, now and as they arrive."""
     hub = entry.runtime_data
-    added: set[str] = set()
+    added = hub.players_added
 
     # TVs seen before a restart come back at once, unavailable until listed.
     registry = er.async_get(hass)
@@ -99,15 +122,7 @@ class LeylaMediaPlayer(MediaPlayerEntity):
         self.hub = hub
         self.tv_id = device_id
         self._attr_unique_id = device_id
-        device = hub.devices[device_id]
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, device_id)},
-            name=device.name,
-            manufacturer="Leyla",
-            model="TV",
-        )
-        if hub.server_device_id is not None:
-            self._attr_device_info["via_device_id"] = hub.server_device_id
+        self._attr_device_info = tv_device_info(hub, device_id)
 
     async def async_added_to_hass(self) -> None:
         """Follow the hub's TV list."""
@@ -116,6 +131,10 @@ class LeylaMediaPlayer(MediaPlayerEntity):
                 self.hass, signal_devices(self.hub.entry.entry_id), self.async_write_ha_state
             )
         )
+
+    async def async_will_remove_from_hass(self) -> None:
+        """A TV removed by hand gets its player back if it ever returns."""
+        self.hub.players_added.discard(self.tv_id)
 
     # ---- state -------------------------------------------------------------
 
@@ -273,18 +292,22 @@ class LeylaMediaPlayer(MediaPlayerEntity):
         self, media_type: MediaType | str, media_id: str, **kwargs: Any
     ) -> None:
         """Play a title by its catalog id, or `item_id:media_source_id` for one file."""
-        item_id, _, source_id = media_id.strip().partition(":")
+        media_id = media_id.strip()
+        for prefix in (f"{ITEM}:", f"{TITLE}:"):
+            media_id = media_id.removeprefix(prefix)
+        item_id, _, source_id = media_id.partition(":")
         if not item_id:
             raise ServiceValidationError(
                 translation_domain=DOMAIN, translation_key="no_media_source"
             )
         try:
             if not source_id:
-                source_id = await self.hub.primary_source(item_id) or ""
-            if not source_id:
-                raise ServiceValidationError(
-                    translation_domain=DOMAIN, translation_key="no_media_source"
-                )
+                found = await self.hub.primary_source(item_id)
+                if found is None:
+                    raise ServiceValidationError(
+                        translation_domain=DOMAIN, translation_key="no_media_source"
+                    )
+                item_id, source_id = found
             await self.hub.play(self.tv_id, item_id, source_id)
         except LeylaCommandError as err:
             raise HomeAssistantError(
@@ -296,3 +319,192 @@ class LeylaMediaPlayer(MediaPlayerEntity):
             raise HomeAssistantError(
                 translation_domain=DOMAIN, translation_key="not_connected"
             ) from err
+
+    # ---- browsing and search -----------------------------------------------
+
+    async def async_browse_media(
+        self, media_content_type: MediaType | str | None = None, media_content_id: str | None = None
+    ) -> BrowseMedia:
+        """Continue watching and each library, down to seasons and episodes."""
+        try:
+            if not media_content_id or media_content_id == ROOT:
+                return self._root()
+            kind, _, rest = media_content_id.partition(":")
+            if kind == CONTINUE:
+                return await self._continue()
+            if kind == LIBRARY:
+                library_id, _, offset = rest.partition(":")
+                return await self._library(library_id, int(offset or 0))
+            if kind == TITLE:
+                return await self._title(rest)
+        except LeylaError as err:
+            raise BrowseError(f"Leyla did not answer: {err}") from err
+        raise BrowseError(f"Unknown media: {media_content_id}")
+
+    def _root(self) -> BrowseMedia:
+        children = [
+            BrowseMedia(
+                title="Continue watching",
+                media_class=MediaClass.DIRECTORY,
+                media_content_id=CONTINUE,
+                media_content_type=MediaType.VIDEO,
+                can_play=False,
+                can_expand=True,
+            )
+        ]
+        children += [
+            BrowseMedia(
+                title=name or library_id,
+                media_class=MediaClass.DIRECTORY,
+                media_content_id=f"{LIBRARY}:{library_id}",
+                media_content_type=MediaType.VIDEO,
+                can_play=False,
+                can_expand=True,
+            )
+            for library_id, name in self.hub.libraries.items()
+        ]
+        return BrowseMedia(
+            title="Leyla",
+            media_class=MediaClass.DIRECTORY,
+            media_content_id=ROOT,
+            media_content_type=MediaType.VIDEO,
+            can_play=False,
+            can_expand=True,
+            children=children,
+            children_media_class=MediaClass.DIRECTORY,
+        )
+
+    async def _continue(self) -> BrowseMedia:
+        items = await self.hub.api.continue_watching()
+        children = []
+        for row in items:
+            if not isinstance(row, dict) or not row.get("catalog_item_id"):
+                continue
+            title = str(row.get("title") or "")
+            if row.get("series_title"):
+                where = (
+                    f"S{row['season_number']} E{row['episode_number']} · "
+                    if row.get("season_number") is not None
+                    and row.get("episode_number") is not None
+                    else ""
+                )
+                title = f"{row['series_title']} · {where}{title}"
+            children.append(
+                BrowseMedia(
+                    title=title,
+                    media_class=MediaClass.EPISODE
+                    if row.get("type") == "episode"
+                    else MediaClass.MOVIE,
+                    media_content_id=play_id(row["catalog_item_id"], row.get("media_source_id")),
+                    media_content_type=MediaType.VIDEO,
+                    can_play=True,
+                    can_expand=False,
+                    thumbnail=self._thumb(row),
+                )
+            )
+        return BrowseMedia(
+            title="Continue watching",
+            media_class=MediaClass.DIRECTORY,
+            media_content_id=CONTINUE,
+            media_content_type=MediaType.VIDEO,
+            can_play=False,
+            can_expand=True,
+            children=children,
+            children_media_class=MediaClass.VIDEO,
+        )
+
+    async def _library(self, library_id: str, offset: int) -> BrowseMedia:
+        page = await self.hub.api.catalog_list(
+            library_id=library_id, sort="title", limit=BROWSE_PAGE, offset=offset
+        )
+        children = [self._entry(row) for row in page["items"] if isinstance(row, dict)]
+        if page.get("has_more"):
+            children.append(
+                BrowseMedia(
+                    title="More",
+                    media_class=MediaClass.DIRECTORY,
+                    media_content_id=f"{LIBRARY}:{library_id}:{offset + BROWSE_PAGE}",
+                    media_content_type=MediaType.VIDEO,
+                    can_play=False,
+                    can_expand=True,
+                )
+            )
+        return BrowseMedia(
+            title=self.hub.libraries.get(library_id) or "Library",
+            media_class=MediaClass.DIRECTORY,
+            media_content_id=f"{LIBRARY}:{library_id}:{offset}"
+            if offset
+            else f"{LIBRARY}:{library_id}",
+            media_content_type=MediaType.VIDEO,
+            can_play=False,
+            can_expand=True,
+            children=children,
+            children_media_class=MediaClass.MOVIE,
+        )
+
+    async def _title(self, item_id: str) -> BrowseMedia:
+        detail = await self.hub.api.catalog_item(item_id)
+        node = self._entry(detail)
+        node.children = [
+            self._entry(child) for child in detail.get("children") or [] if isinstance(child, dict)
+        ]
+        return node
+
+    def _entry(self, row: dict[str, Any]) -> BrowseMedia:
+        """A film or an episode plays; a series or a season opens."""
+        kind = row.get("type")
+        title = str(row.get("title") or "")
+        if kind == "episode" and row.get("episode_number") is not None:
+            title = f"{row['episode_number']}. {title}"
+        elif kind in ("film", "series") and row.get("year"):
+            title = f"{title} ({row['year']})"
+        opens = kind in ("series", "season")
+        media_class = {
+            "film": MediaClass.MOVIE,
+            "series": MediaClass.TV_SHOW,
+            "season": MediaClass.SEASON,
+            "episode": MediaClass.EPISODE,
+        }.get(str(kind), MediaClass.VIDEO)
+        return BrowseMedia(
+            title=title,
+            media_class=media_class,
+            media_content_id=f"{TITLE if opens else ITEM}:{row['id']}",
+            media_content_type=MediaType.TVSHOW if opens else MediaType.VIDEO,
+            can_play=True,
+            can_expand=opens,
+            thumbnail=self._thumb(row),
+        )
+
+    def _thumb(self, row: dict[str, Any]) -> str | None:
+        """The poster, through Home Assistant's own proxy: never a token in a URL."""
+        url = poster_url(row)
+        if url is None:
+            return None
+        return self.get_browse_image_url(MediaType.VIDEO, url.removeprefix(self.hub.api.url))
+
+    async def async_get_browse_image(
+        self,
+        media_content_type: MediaType | str,
+        media_content_id: str,
+        media_image_id: str | None = None,
+    ) -> tuple[bytes | None, str | None]:
+        """A poster for the browser, fetched with the sign-in from this server only."""
+        try:
+            return await self.hub.api.fetch_image(media_content_id)
+        except LeylaError:
+            return None, None
+
+    async def async_search_media(self, query: SearchMediaQuery) -> SearchMedia:
+        """Find films and series by title or description (and voice: "play
+        Arrival on the living room TV")."""
+        try:
+            page = await self.hub.api.catalog_list(
+                query=query.search_query, kind="title", limit=SEARCH_LIMIT
+            )
+        except LeylaError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="not_connected"
+            ) from err
+        return SearchMedia(
+            result=[self._entry(row) for row in page["items"] if isinstance(row, dict)]
+        )

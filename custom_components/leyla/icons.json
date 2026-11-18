@@ -1,0 +1,36 @@
+{
+  "entity": {
+    "button": {
+      "scan": {
+        "default": "mdi:folder-refresh"
+      }
+    },
+    "event": {
+      "library_updated": {
+        "default": "mdi:filmstrip-box-multiple"
+      }
+    },
+    "select": {
+      "audio_track": {
+        "default": "mdi:speaker"
+      },
+      "subtitle_track": {
+        "default": "mdi:subtitles",
+        "state": {
+          "off": "mdi:subtitles-outline"
+        }
+      }
+    },
+    "sensor": {
+      "active_streams": {
+        "default": "mdi:play-network"
+      },
+      "active_conversions": {
+        "default": "mdi:swap-horizontal-circle"
+      },
+      "library_titles": {
+        "default": "mdi:movie-open"
+      }
+    }
+  }
+}

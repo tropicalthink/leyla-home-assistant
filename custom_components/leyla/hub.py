@@ -10,10 +10,10 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 import contextlib
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import logging
 import random
@@ -24,6 +24,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.debounce import Debouncer
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later, async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -43,8 +44,10 @@ from .const import (
     CLOSE_ACCESS_CHANGED,
     CLOSE_SIGNED_OUT,
     COMMAND_TIMEOUT,
+    COUNTS_POLL,
     DOMAIN,
     EVENT_LIBRARY_UPDATED,
+    FINDINGS_POLL,
     HEARTBEAT,
     KEEPALIVE,
     NOW_PLAYING_DEBOUNCE,
@@ -53,6 +56,7 @@ from .const import (
     TOPIC_ADMIN_NOW_PLAYING,
     TOPIC_CATALOG,
     TOPIC_REMOTE,
+    UPDATES_POLL,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -86,34 +90,68 @@ def signal_devices(entry_id: str) -> str:
     return f"{DOMAIN}_{entry_id}_devices"
 
 
-class NowPlayingCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
-    """The admin's live sessions: event-driven, with a slow poll behind it."""
+def tv_device_info(hub: LeylaHub, device_id: str) -> DeviceInfo:
+    """A TV's device, the same from every platform, so whichever registers it
+    first gives it its name."""
+    device = hub.devices.get(device_id)
+    info = DeviceInfo(
+        identifiers={(DOMAIN, device_id)},
+        name=device.name if device else "TV",
+        manufacturer="Leyla",
+        model="TV",
+    )
+    if hub.server_device_id is not None:
+        info["via_device_id"] = hub.server_device_id
+    return info
 
-    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, api: LeylaApi) -> None:
+
+def signal_library(entry_id: str) -> str:
+    """The dispatcher signal sent when a library's titles changed."""
+    return f"{DOMAIN}_{entry_id}_library"
+
+
+class LeylaCoordinator[T](DataUpdateCoordinator[T]):
+    """One read of the server, refreshed on a timer and when the live channel
+    says it changed. A 403 (the account is no longer an administrator)
+    answers `empty` rather than failing on every poll; the hub reloads the
+    entry when the server says access changed."""
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        name: str,
+        fetch: Callable[[], Awaitable[T]],
+        interval: timedelta,
+        empty: T,
+    ) -> None:
         super().__init__(
             hass,
             _LOGGER,
             config_entry=entry,
-            name=f"{DOMAIN} now playing",
-            update_interval=NOW_PLAYING_POLL,
+            name=f"{DOMAIN} {name}",
+            update_interval=interval,
             request_refresh_debouncer=Debouncer(
                 hass, _LOGGER, cooldown=NOW_PLAYING_DEBOUNCE, immediate=False
             ),
         )
-        self.api = api
+        self._fetch = fetch
+        self._empty = empty
 
-    async def _async_update_data(self) -> list[dict[str, Any]]:
+    async def _async_update_data(self) -> T:
         try:
-            return await self.api.now_playing()
+            return await self._fetch()
         except LeylaAuthError as err:
             raise ConfigEntryAuthFailed from err
         except LeylaApiError as err:
             if err.status == 403:
-                # No longer an admin: report nothing rather than fail forever.
-                return []
+                return self._empty
             raise UpdateFailed(str(err)) from err
         except LeylaError as err:
             raise UpdateFailed(str(err)) from err
+
+
+type NowPlayingCoordinator = LeylaCoordinator[list[dict[str, Any]]]
 
 
 class LeylaHub:
@@ -133,8 +171,20 @@ class LeylaHub:
         self._session = session
         self.account = account
         self.is_admin = bool(account.get("is_admin"))
-        self.now_playing: NowPlayingCoordinator | None = (
-            NowPlayingCoordinator(hass, entry, api) if self.is_admin else None
+        self.now_playing: NowPlayingCoordinator | None = None
+        self.updates: LeylaCoordinator[dict[str, Any] | None] | None = None
+        self.findings: LeylaCoordinator[list[dict[str, Any]]] | None = None
+        if self.is_admin:
+            self.now_playing = LeylaCoordinator(
+                hass, entry, "now playing", api.now_playing, NOW_PLAYING_POLL, []
+            )
+            self.updates = LeylaCoordinator(hass, entry, "updates", api.updates, UPDATES_POLL, None)
+            self.findings = LeylaCoordinator(
+                hass, entry, "findings", api.findings, FINDINGS_POLL, []
+            )
+        # Every account sees its own libraries' sizes.
+        self.counts: LeylaCoordinator[list[dict[str, Any]]] = LeylaCoordinator(
+            hass, entry, "library sizes", api.catalog_counts, COUNTS_POLL, []
         )
         self.devices: dict[str, RemoteDevice] = {}
         # The server's own device, which every TV hangs under.
@@ -155,6 +205,12 @@ class LeylaHub:
         self._signed_out = False
         self._posters: OrderedDict[str, tuple[bytes, str] | None] = OrderedDict()
         self._unsub_keepalive: Callable[[], None] | None = None
+        # The TVs that have a media player and pickers, so one removed by
+        # hand gets them back if it ever returns.
+        self.players_added: set[str] = set()
+        self.selects_added: set[str] = set()
+        # Whether "lost the connection" was logged and "connected again" is owed.
+        self._lost = False
 
     # ---- lifecycle ---------------------------------------------------------
 
@@ -244,6 +300,14 @@ class LeylaHub:
                 self._on_closed()
             if self._stopping:
                 break
+            if not self._lost:
+                # Once, at info: the TVs are unavailable until it is back.
+                self._lost = True
+                _LOGGER.info(
+                    "Lost the connection to Leyla at %s (%s); trying again",
+                    self.api.url,
+                    self.last_close,
+                )
             if opened_at is not None and self.hass.loop.time() - opened_at >= STABLE_AFTER:
                 backoff = BACKOFF_FIRST
             delay = backoff * random.uniform(0.8, 1.2)
@@ -254,6 +318,9 @@ class LeylaHub:
         self._ws = ws
         self.connected = True
         self.connect_count += 1
+        if self._lost:
+            self._lost = False
+            _LOGGER.info("Connected to Leyla at %s again", self.api.url)
         # A reconnect is a resync, and a restarted server counts revisions
         # from the start again.
         self._revision = None
@@ -339,6 +406,7 @@ class LeylaHub:
             self._apply_devices(payload)
         elif kind == "catalog.changed":
             self.hass.async_create_task(self._library_changed(payload.get("library_id")))
+            self.hass.async_create_task(self.counts.async_request_refresh())
         elif kind == "admin.now_playing.changed":
             if self.now_playing is not None:
                 self.hass.async_create_task(self.now_playing.async_request_refresh())
@@ -425,14 +493,13 @@ class LeylaHub:
                 name = self.libraries.get(library_id)
         else:
             library_id = None
-        self.hass.bus.async_fire(
-            EVENT_LIBRARY_UPDATED,
-            {
-                "config_entry_id": self.entry.entry_id,
-                "library_id": library_id,
-                "library_name": name,
-            },
-        )
+        data = {
+            "config_entry_id": self.entry.entry_id,
+            "library_id": library_id,
+            "library_name": name,
+        }
+        self.hass.bus.async_fire(EVENT_LIBRARY_UPDATED, data)
+        async_dispatcher_send(self.hass, signal_library(self.entry.entry_id), data)
 
     # ---- commands ----------------------------------------------------------
 
@@ -509,8 +576,20 @@ class LeylaHub:
             self._posters.popitem(last=False)
         return image
 
-    async def primary_source(self, item_id: str) -> str | None:
-        """The file a title plays by default."""
+    async def primary_source(self, item_id: str) -> tuple[str, str] | None:
+        """What to play for a catalog id: a film or an episode's own file, the
+        episode a series (or season) goes on with, else its first episode."""
         detail = await self.api.catalog_item(item_id)
         source = detail.get("primary_media_source_id")
-        return str(source) if source else None
+        if source:
+            return item_id, str(source)
+        if detail.get("type") == "series":
+            going_on = await self.api.series_continue(item_id)
+            if going_on is not None:
+                return str(going_on["catalog_item_id"]), str(going_on["media_source_id"])
+        for child in detail.get("children") or []:
+            if isinstance(child, dict) and child.get("id"):
+                found = await self.primary_source(str(child["id"]))
+                if found is not None:
+                    return found
+        return None

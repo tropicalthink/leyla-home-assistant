@@ -16,12 +16,17 @@ from datetime import timedelta
 import logging
 from typing import Any
 
-from homeassistant.config_entries import SOURCE_REAUTH, ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import (
+    SOURCE_REAUTH,
+    ConfigFlow,
+    ConfigFlowResult,
+)
 from homeassistant.const import CONF_ACCESS_TOKEN, CONF_URL
 from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 from homeassistant.util import dt as dt_util
-import voluptuous as vol
+import probatio
 
 from .api import (
     DeviceCode,
@@ -31,7 +36,7 @@ from .api import (
     LeylaError,
     normalize_url,
 )
-from .const import DOMAIN
+from .const import CONF_SERVER_ID, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -50,6 +55,8 @@ class LeylaConfigFlow(ConfigFlow, domain=DOMAIN):
         self._code: DeviceCode | None = None
         self._code_task: asyncio.Task[dict[str, Any] | None] | None = None
         self._token: str | None = None
+        self._server_id: str | None = None
+        self._name: str | None = None
 
     @callback
     def async_remove(self) -> None:
@@ -75,8 +82,54 @@ class LeylaConfigFlow(ConfigFlow, domain=DOMAIN):
                 return await self.async_step_method()
         return self.async_show_form(
             step_id="user",
-            data_schema=vol.Schema({vol.Required(CONF_URL, default=self._url or ""): str}),
+            data_schema=probatio.Schema(
+                {probatio.Required(CONF_URL, default=self._url or ""): str}
+            ),
             errors=errors,
+        )
+
+    # ---- found on the home network ------------------------------------------
+
+    async def async_step_zeroconf(self, discovery_info: ZeroconfServiceInfo) -> ConfigFlowResult:
+        """A Leyla server announced itself (`_leyla._tcp`, with its id and port)."""
+        props = discovery_info.properties
+        port = props.get("http") or str(discovery_info.port or "")
+        host = discovery_info.host
+        if ":" in host:
+            host = f"[{host}]"
+        self._url = f"http://{host}:{port}" if port else f"http://{host}"
+        self._server_id = props.get("id") or None
+        self._name = props.get("name") or discovery_info.name.split(".", 1)[0]
+        for entry in self._async_current_entries(include_ignore=True):
+            if self._server_id and entry.data.get(CONF_SERVER_ID) == self._server_id:
+                return self.async_abort(reason="already_configured")
+            known = entry.data.get(CONF_URL, "")
+            if (
+                known
+                and known.split("://", 1)[-1].rsplit(":", 1)[0].strip("[]") == discovery_info.host
+            ):
+                if self._server_id and not entry.data.get(CONF_SERVER_ID):
+                    # Remember the server's id, so a new address is still it.
+                    self.hass.config_entries.async_update_entry(
+                        entry, data={**entry.data, CONF_SERVER_ID: self._server_id}
+                    )
+                return self.async_abort(reason="already_configured")
+        if self._server_id:
+            # One discovery flow per server, however many addresses it has.
+            await self.async_set_unique_id(f"server:{self._server_id}")
+            self._abort_if_unique_id_configured()
+        self.context["title_placeholders"] = {"name": self._name}
+        return await self.async_step_zeroconf_confirm()
+
+    async def async_step_zeroconf_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Set up the server that was found?"""
+        if user_input is not None:
+            return await self.async_step_method()
+        return self.async_show_form(
+            step_id="zeroconf_confirm",
+            description_placeholders={"name": self._name or "", "url": self._url or ""},
         )
 
     async def async_step_method(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
@@ -169,7 +222,7 @@ class LeylaConfigFlow(ConfigFlow, domain=DOMAIN):
                 return await self.async_step_finish()
         return self.async_show_form(
             step_id="token",
-            data_schema=vol.Schema({vol.Required(CONF_ACCESS_TOKEN): str}),
+            data_schema=probatio.Schema({probatio.Required(CONF_ACCESS_TOKEN): str}),
             errors=errors,
         )
 
@@ -184,8 +237,10 @@ class LeylaConfigFlow(ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason="invalid_auth")
         except LeylaError:
             return self.async_abort(reason="cannot_connect")
-        await self.async_set_unique_id(str(account["id"]))
-        data = {CONF_URL: self._url, CONF_ACCESS_TOKEN: self._token}
+        await self.async_set_unique_id(str(account["id"]), raise_on_progress=False)
+        data: dict[str, Any] = {CONF_URL: self._url, CONF_ACCESS_TOKEN: self._token}
+        if self._server_id:
+            data[CONF_SERVER_ID] = self._server_id
         if self.source == SOURCE_REAUTH:
             self._abort_if_unique_id_mismatch(reason="wrong_account")
             return self.async_update_reload_and_abort(self._get_reauth_entry(), data_updates=data)
@@ -196,6 +251,40 @@ class LeylaConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
     # ---- reauth ------------------------------------------------------------
+
+    # ---- a new address -----------------------------------------------------
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """The server moved: a new address, the same sign-in."""
+        entry = self._get_reconfigure_entry()
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            try:
+                self._url = normalize_url(user_input[CONF_URL])
+            except ValueError:
+                errors[CONF_URL] = "invalid_url"
+            else:
+                try:
+                    account = await self._api(entry.data[CONF_ACCESS_TOKEN]).me()
+                except LeylaAuthError:
+                    errors["base"] = "invalid_auth"
+                except LeylaError:
+                    errors["base"] = "cannot_connect"
+                else:
+                    await self.async_set_unique_id(str(account["id"]))
+                    self._abort_if_unique_id_mismatch(reason="wrong_account")
+                    return self.async_update_reload_and_abort(
+                        entry, data_updates={CONF_URL: self._url}
+                    )
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=probatio.Schema(
+                {probatio.Required(CONF_URL, default=self._url or entry.data[CONF_URL]): str}
+            ),
+            errors=errors,
+        )
 
     async def async_step_reauth(self, entry_data: Mapping[str, Any]) -> ConfigFlowResult:
         """The sign-in stopped working (signed out, expired or revoked)."""

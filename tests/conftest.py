@@ -21,6 +21,19 @@ TV_ID = "0199a0b1-0000-7000-8000-0000000000aa"
 TV2_ID = "0199a0b1-0000-7000-8000-0000000000bb"
 LIBRARY_ID = "0199a0b1-0000-7000-8000-0000000000f1"
 
+UPDATES_CURRENT: dict[str, Any] = {
+    "running": "0.15.1",
+    "platform": "linux-x86_64",
+    "channel": "stable",
+    "automatic": True,
+    "state": "current",
+    "newer": None,
+    "needs_plan": False,
+    "held": None,
+    "failure": None,
+    "progress": None,
+}
+
 
 @pytest.fixture(autouse=True)
 def auto_enable_custom_integrations(enable_custom_integrations: Any) -> None:
@@ -82,6 +95,29 @@ def mock_api() -> Generator[dict[str, AsyncMock]]:
         patch(
             "custom_components.leyla.api.LeylaApi.live_ticket", new_callable=AsyncMock
         ) as live_ticket,
+        patch(
+            "custom_components.leyla.api.LeylaApi.catalog_counts", new_callable=AsyncMock
+        ) as catalog_counts,
+        patch(
+            "custom_components.leyla.api.LeylaApi.catalog_list", new_callable=AsyncMock
+        ) as catalog_list,
+        patch(
+            "custom_components.leyla.api.LeylaApi.continue_watching", new_callable=AsyncMock
+        ) as continue_watching,
+        patch(
+            "custom_components.leyla.api.LeylaApi.series_continue", new_callable=AsyncMock
+        ) as series_continue,
+        patch("custom_components.leyla.api.LeylaApi.updates", new_callable=AsyncMock) as updates,
+        patch(
+            "custom_components.leyla.api.LeylaApi.install_update", new_callable=AsyncMock
+        ) as install_update,
+        patch("custom_components.leyla.api.LeylaApi.findings", new_callable=AsyncMock) as findings,
+        patch(
+            "custom_components.leyla.api.LeylaApi.acknowledge_finding", new_callable=AsyncMock
+        ) as acknowledge_finding,
+        patch(
+            "custom_components.leyla.api.LeylaApi.start_scan", new_callable=AsyncMock
+        ) as start_scan,
         # No real socket: tests drive the hub through FakeSocket.
         patch("custom_components.leyla.hub.LeylaHub._run", new_callable=AsyncMock),
     ):
@@ -89,7 +125,22 @@ def mock_api() -> Generator[dict[str, AsyncMock]]:
         libraries.return_value = [{"id": LIBRARY_ID, "name": "Films"}]
         now_playing.return_value = []
         live_ticket.return_value = "t" * 64
+        catalog_counts.return_value = [{"library_id": LIBRARY_ID, "item_count": 42}]
+        catalog_list.return_value = {"items": [], "total": 0, "has_more": False}
+        continue_watching.return_value = []
+        series_continue.return_value = None
+        updates.return_value = UPDATES_CURRENT
+        findings.return_value = []
         yield {
+            "catalog_counts": catalog_counts,
+            "catalog_list": catalog_list,
+            "continue_watching": continue_watching,
+            "series_continue": series_continue,
+            "updates": updates,
+            "install_update": install_update,
+            "findings": findings,
+            "acknowledge_finding": acknowledge_finding,
+            "start_scan": start_scan,
             "me": me,
             "libraries": libraries,
             "now_playing": now_playing,

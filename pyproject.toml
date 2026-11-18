@@ -16,3 +16,12 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 force-sort-within-sections = true
 known-first-party = ["custom_components"]
 combine-as-imports = true
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+ignore_missing_imports = true
+files = ["custom_components/leyla"]
+
+[tool.coverage.report]
+fail_under = 98

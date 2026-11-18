@@ -53,3 +53,23 @@ KEEPALIVE: Final = timedelta(hours=12)
 CONVERTING_VIDEO_ACTION: Final = "transcode"
 
 MAX_SESSIONS_IN_ATTRIBUTES: Final = 10
+
+# The server's own update state, what needs attention, and library sizes:
+# slow polls, since nothing here changes by the second. Sizes also refresh
+# when the live channel says a library changed.
+UPDATES_POLL: Final = timedelta(hours=1)
+FINDINGS_POLL: Final = timedelta(minutes=10)
+COUNTS_POLL: Final = timedelta(hours=1)
+
+# Leyla servers announce themselves on the home network.
+ZEROCONF_TYPE: Final = "_leyla._tcp.local."
+CONF_SERVER_ID: Final = "server_id"
+
+# The media browser and search: a page of titles, and how many results a
+# search returns.
+BROWSE_PAGE: Final = 100
+SEARCH_LIMIT: Final = 20
+
+# The finding severities that open a repair in Home Assistant; "info" stays
+# in Leyla's own inbox.
+REPAIR_SEVERITIES: Final = frozenset({"action", "attention"})

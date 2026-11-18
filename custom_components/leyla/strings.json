@@ -6,6 +6,9 @@
         "description": "The address you open Leyla at, for example http://192.168.1.20:10001.",
         "data": {
           "url": "Server address"
+        },
+        "data_description": {
+          "url": "The address you open Leyla at, with its port."
         }
       },
       "method": {
@@ -28,6 +31,9 @@
         "description": "A token from a device that is signed in to Leyla. It stays valid while it is used and ends when that device is signed out.",
         "data": {
           "access_token": "Token"
+        },
+        "data_description": {
+          "access_token": "Copied from a device that is signed in to Leyla."
         }
       },
       "reauth_confirm": {
@@ -36,6 +42,20 @@
         "menu_options": {
           "code": "Sign in with a code (recommended)",
           "token": "Paste a token from a signed-in device"
+        }
+      },
+      "zeroconf_confirm": {
+        "title": "Leyla found on your network",
+        "description": "Set up {name} at {url}?"
+      },
+      "reconfigure": {
+        "title": "A new address",
+        "description": "Where Leyla is now, for example http://192.168.1.20:10001. The sign-in stays the same.",
+        "data": {
+          "url": "Server address"
+        },
+        "data_description": {
+          "url": "The address you open Leyla at."
         }
       }
     },
@@ -52,10 +72,42 @@
       "cannot_connect": "Leyla did not answer at that address.",
       "invalid_auth": "Leyla did not accept the sign-in.",
       "reauth_successful": "Signed in again.",
-      "wrong_account": "That sign-in belongs to another account. Sign in as the account this entry was set up with."
-    }
+      "wrong_account": "That sign-in belongs to another account. Sign in as the account this entry was set up with.",
+      "reconfigure_successful": "The address is updated.",
+      "unique_id_mismatch": "That sign-in belongs to another account.",
+      "not_loaded": "Leyla is not set up right now."
+    },
+    "flow_title": "{name}"
   },
   "entity": {
+    "button": {
+      "scan": {
+        "name": "Scan {library}"
+      }
+    },
+    "event": {
+      "library_updated": {
+        "name": "Library updated",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "updated": "Updated"
+            }
+          }
+        }
+      }
+    },
+    "select": {
+      "audio_track": {
+        "name": "Audio"
+      },
+      "subtitle_track": {
+        "name": "Subtitles",
+        "state": {
+          "off": "Off"
+        }
+      }
+    },
     "sensor": {
       "active_streams": {
         "name": "Active streams",
@@ -64,6 +116,15 @@
       "active_conversions": {
         "name": "Active conversions",
         "unit_of_measurement": "streams"
+      },
+      "library_titles": {
+        "name": "{library} titles",
+        "unit_of_measurement": "titles"
+      }
+    },
+    "update": {
+      "server": {
+        "name": "Leyla server"
       }
     }
   },
@@ -76,6 +137,35 @@
     },
     "no_media_source": {
       "message": "That title has no file to play."
+    },
+    "cannot_connect": {
+      "message": "Leyla did not answer at {url}."
+    },
+    "update_failed": {
+      "message": "Leyla could not start the update: {error}."
+    },
+    "scan_failed": {
+      "message": "Leyla could not start the scan: {error}."
+    },
+    "no_such_track": {
+      "message": "This TV has no track called {track}."
+    }
+  },
+  "issues": {
+    "finding": {
+      "title": "{title}",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "{title}",
+            "description": "{explanation}\n\n{impact}\n\nThis is from Leyla at {url} ({server}). Leyla says how to fix it under Administration. Set it aside here once it is handled or you have decided to leave it."
+          }
+        },
+        "abort": {
+          "not_loaded": "Leyla is not set up right now.",
+          "cannot_connect": "Leyla did not answer."
+        }
+      }
     }
   }
 }
