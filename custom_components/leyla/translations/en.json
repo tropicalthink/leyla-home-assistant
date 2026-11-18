@@ -121,11 +121,6 @@
         "name": "{library} titles",
         "unit_of_measurement": "titles"
       }
-    },
-    "update": {
-      "server": {
-        "name": "Leyla server"
-      }
     }
   },
   "exceptions": {

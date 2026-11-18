@@ -62,8 +62,10 @@ async def test_found_then_signed_in(hass: HomeAssistant) -> None:
         CONF_URL: "http://192.168.1.20:10001",
         CONF_ACCESS_TOKEN: TOKEN,
         CONF_SERVER_ID: SERVER_ID,
+        "name": "Living room",
     }
     assert result["result"].unique_id == ACCOUNT_ID
+    assert result["title"] == "Living room (maya)"
 
 
 async def test_found_twice_is_one_flow(hass: HomeAssistant) -> None:

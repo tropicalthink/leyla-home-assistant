@@ -28,6 +28,16 @@ async def api(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> Leyla
     return LeylaApi(async_get_clientsession(hass), URL, "tok")
 
 
+async def test_reachable(api: LeylaApi, aioclient_mock: AiohttpClientMocker) -> None:
+    aioclient_mock.get(f"{URL}/healthz", text="ok")
+    await api.reachable()
+    assert "Authorization" not in (aioclient_mock.mock_calls[0][3] or {})
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(f"{URL}/healthz", status=HTTPStatus.NOT_FOUND)
+    with pytest.raises(LeylaApiError):
+        await api.reachable()
+
+
 async def test_me(api: LeylaApi, aioclient_mock: AiohttpClientMocker) -> None:
     aioclient_mock.get(f"{API}/auth/me", json={"id": "a", "username": "maya"})
     assert (await api.me())["id"] == "a"

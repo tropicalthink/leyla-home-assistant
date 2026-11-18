@@ -45,10 +45,10 @@ from .conftest import LIBRARY_ID, TV_ID, UPDATES_CURRENT, account, devices_event
 PLAYER = "media_player.leyla_app_on_lg_tv"
 AUDIO = "select.leyla_app_on_lg_tv_audio"
 SUBTITLES = "select.leyla_app_on_lg_tv_subtitles"
-UPDATE = "update.maya_on_http_leyla_local_10001_leyla_server"
-SCAN = "button.maya_on_http_leyla_local_10001_scan_films"
-TITLES = "sensor.maya_on_http_leyla_local_10001_films_titles"
-EVENT = "event.maya_on_http_leyla_local_10001_library_updated"
+UPDATE = "update.leyla"
+SCAN = "button.leyla_scan_films"
+TITLES = "sensor.leyla_films_titles"
+EVENT = "event.leyla_library_updated"
 
 FINDING = {
     "id": "disk_low:/media",
@@ -404,6 +404,13 @@ async def test_browse(
 
     root = (await browse(hass, hass_ws_client, None))["result"]
     assert [c["title"] for c in root["children"]] == ["Continue watching", "Films"]
+    assert root["children"][1]["thumbnail"] is None
+    mock_api["catalog_counts"].return_value = [
+        {"library_id": LIBRARY_ID, "item_count": 42, "cover_artwork": ["/api/v1/artwork/c.jpg"]}
+    ]
+    await hub.counts.async_refresh()
+    root = (await browse(hass, hass_ws_client, None))["result"]
+    assert "artwork" in root["children"][1]["thumbnail"]
 
     mock_api["continue_watching"].return_value = [
         {

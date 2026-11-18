@@ -20,8 +20,8 @@ from custom_components.leyla.diagnostics import async_get_config_entry_diagnosti
 
 from .conftest import LIBRARY_ID, TOKEN, URL, account, devices_event, playing, setup, tv
 
-STREAMS = "sensor.maya_on_http_leyla_local_10001_active_streams"
-CONVERSIONS = "sensor.maya_on_http_leyla_local_10001_active_conversions"
+STREAMS = "sensor.leyla_active_streams"
+CONVERSIONS = "sensor.leyla_active_conversions"
 
 
 def session(mode: str, title: str = "Arrival", video_action: str | None = None) -> dict[str, Any]:

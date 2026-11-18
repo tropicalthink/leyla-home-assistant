@@ -21,7 +21,7 @@ from homeassistant.config_entries import (
     ConfigFlow,
     ConfigFlowResult,
 )
-from homeassistant.const import CONF_ACCESS_TOKEN, CONF_URL
+from homeassistant.const import CONF_ACCESS_TOKEN, CONF_NAME, CONF_URL
 from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
@@ -79,7 +79,14 @@ class LeylaConfigFlow(ConfigFlow, domain=DOMAIN):
             except ValueError:
                 errors[CONF_URL] = "invalid_url"
             else:
-                return await self.async_step_method()
+                # Ask now, so a mistyped address is fixed here rather than
+                # found after choosing how to sign in.
+                try:
+                    await self._api().reachable()
+                except LeylaError:
+                    errors["base"] = "cannot_connect"
+                else:
+                    return await self.async_step_method()
         return self.async_show_form(
             step_id="user",
             data_schema=probatio.Schema(
@@ -241,14 +248,16 @@ class LeylaConfigFlow(ConfigFlow, domain=DOMAIN):
         data: dict[str, Any] = {CONF_URL: self._url, CONF_ACCESS_TOKEN: self._token}
         if self._server_id:
             data[CONF_SERVER_ID] = self._server_id
+        if self._name:
+            data[CONF_NAME] = self._name
         if self.source == SOURCE_REAUTH:
             self._abort_if_unique_id_mismatch(reason="wrong_account")
             return self.async_update_reload_and_abort(self._get_reauth_entry(), data_updates=data)
         self._abort_if_unique_id_configured(updates=data)
         host = self._url.split("://", 1)[-1] if self._url else ""
-        return self.async_create_entry(
-            title=f"{account.get('username', 'Leyla')} on {host}", data=data
-        )
+        who = account.get("username", "Leyla")
+        title = f"{self._name} ({who})" if self._name else f"{who} on {host}"
+        return self.async_create_entry(title=title, data=data)
 
     # ---- reauth ------------------------------------------------------------
 

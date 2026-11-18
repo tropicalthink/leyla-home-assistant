@@ -43,7 +43,8 @@ class LeylaServerUpdate(CoordinatorEntity[LeylaCoordinator[dict[str, Any] | None
     """The server's version, and the newer one when there is one."""
 
     _attr_has_entity_name = True
-    _attr_translation_key = "server"
+    # The server's own device names it: "update.living_room".
+    _attr_name = None
     _attr_supported_features = UpdateEntityFeature.INSTALL | UpdateEntityFeature.PROGRESS
     _attr_title = "Leyla"
 

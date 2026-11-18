@@ -56,7 +56,8 @@ async def start(hass: HomeAssistant, url: str = "leyla.local:10001/"):
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "user"
-    result = await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_URL: url})
+    with patch_api(reachable=AsyncMock(return_value=None)):
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_URL: url})
     assert result["type"] is FlowResultType.MENU
     assert result["step_id"] == "method"
     return result
@@ -198,3 +199,18 @@ async def test_reauth_wrong_account(hass: HomeAssistant, entry: MockConfigEntry)
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "wrong_account"
     assert entry.data[CONF_ACCESS_TOKEN] == TOKEN
+
+
+async def test_an_address_that_does_not_answer_stays_on_the_form(hass: HomeAssistant) -> None:
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+    with patch_api(reachable=AsyncMock(side_effect=LeylaConnectionError("refused"))):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_URL: "leyla.lcoal:10001"}
+        )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "cannot_connect"}
+    with patch_api(reachable=AsyncMock(return_value=None)):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_URL: "leyla.local:10001"}
+        )
+    assert result["step_id"] == "method"

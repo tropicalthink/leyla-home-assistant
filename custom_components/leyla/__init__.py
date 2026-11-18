@@ -6,7 +6,7 @@ Local only: it talks to the operator's own Leyla server and nothing else.
 from __future__ import annotations
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_ACCESS_TOKEN, CONF_URL, Platform
+from homeassistant.const import CONF_ACCESS_TOKEN, CONF_NAME, CONF_URL, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr
@@ -57,7 +57,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: LeylaConfigEntry) -> boo
         identifiers={(DOMAIN, entry.entry_id)},
         manufacturer="Leyla",
         model="Leyla server",
-        name=entry.title,
+        # The server's own name when it announced one, so entities read
+        # "Living room Films titles" rather than an account and an address.
+        name=entry.data.get(CONF_NAME) or "Leyla",
         sw_version=(hub.updates.data or {}).get("running") if hub.updates else None,
         configuration_url=entry.data[CONF_URL],
         entry_type=dr.DeviceEntryType.SERVICE,

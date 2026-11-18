@@ -18,6 +18,7 @@ from homeassistant.components.media_player.browse_media import (
 )
 from homeassistant.components.media_player.const import (
     MediaClass,
+    MediaPlayerDeviceClass,
     MediaPlayerEntityFeature,
     MediaPlayerState,
     MediaType,
@@ -115,6 +116,7 @@ class LeylaMediaPlayer(MediaPlayerEntity):
 
     _attr_has_entity_name = True
     _attr_name = None
+    _attr_device_class = MediaPlayerDeviceClass.TV
     _attr_should_poll = False
     _attr_media_image_remotely_accessible = False
 
@@ -360,6 +362,7 @@ class LeylaMediaPlayer(MediaPlayerEntity):
                 media_content_type=MediaType.VIDEO,
                 can_play=False,
                 can_expand=True,
+                thumbnail=self._library_cover(library_id),
             )
             for library_id, name in self.hub.libraries.items()
         ]
@@ -474,6 +477,15 @@ class LeylaMediaPlayer(MediaPlayerEntity):
             can_expand=opens,
             thumbnail=self._thumb(row),
         )
+
+    def _library_cover(self, library_id: str) -> str | None:
+        """A library's newest poster, as Leyla's own library cards show it."""
+        for row in self.hub.counts.data or []:
+            if isinstance(row, dict) and str(row.get("library_id")) == library_id:
+                covers = row.get("cover_artwork")
+                if isinstance(covers, list) and covers and isinstance(covers[0], str):
+                    return self._thumb({"poster_artwork": {"url": covers[0]}})
+        return None
 
     def _thumb(self, row: dict[str, Any]) -> str | None:
         """The poster, through Home Assistant's own proxy: never a token in a URL."""

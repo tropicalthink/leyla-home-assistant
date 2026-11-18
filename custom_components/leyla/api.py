@@ -115,6 +115,12 @@ class LeylaApi:
             code = body["error"].get("code")
         return LeylaApiError(status, code)
 
+    async def reachable(self) -> None:
+        """Something answers at this address (`/healthz`, no sign-in needed)."""
+        status, body = await self._request("GET", "/healthz", auth=False)
+        if status != 200:
+            raise self._error(status, body)
+
     async def me(self) -> dict[str, Any]:
         """The signed-in account: id, username, is_admin."""
         status, body = await self._request("GET", "/api/v1/auth/me")
